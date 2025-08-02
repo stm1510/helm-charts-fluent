@@ -1,0 +1,85 @@
+
+# Fluent Bit Helm Chart Values - OpenShift + Splunk HEC
+# Chart: https://github.com/fluent/helm-charts/tree/main/charts/fluent-bit
+
+serviceAccount:
+  create: true
+  name: fluent-bit
+
+rbac:
+  create: true
+
+tolerations:
+  - key: node-role.kubernetes.io/master
+    operator: Exists
+    effect: NoSchedule
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 200Mi
+  requests:
+    cpu: 100m
+    memory: 100Mi
+
+securityContext:
+  runAsUser: 0  # Or use a valid OpenShift UID from SCC
+  privileged: false
+
+inputs:
+  tail:
+    enabled: true
+    path: /var/log/containers/*.log
+    parser: cri
+    tag: kube.*
+    memBufLimit: 10MB
+    refreshInterval: 5
+    skipLongLines: true
+
+filters:
+  kubernetes:
+    enabled: true
+    match: kube.*
+    mergeLog: true
+    keepLog: false
+    mergeLogKey: log_processed
+    k8sLoggingParser: false
+
+  lua:
+    enabled: true
+    match: kube.*
+    script: filters.lua
+    call: filter
+
+outputs:
+  splunk:
+    enabled: true
+    host: splunk.example.com     # <-- Replace with your HEC hostname
+    port: 8088
+    tls: true
+    tls_verify: false
+    hec_token: A1B2C3D4E5F6G7H8I9J0  # <-- Replace with your HEC token
+    hec_send_raw: true
+    # Optional extras:
+    # index: my-k8s-index
+    # sourcetype: k8s_logs
+
+luaScripts:
+  filters.lua: |
+    function filter(tag, timestamp, record)
+      local ns = record["kubernetes"] and record["kubernetes"]["namespace_name"]
+      if ns == "default" or ns == "kube-system" then
+        return -1, timestamp, record
+      end
+      return 0, timestamp, record
+    end
+
+parsers:
+  enabled: true
+  regex:
+    cri:
+      name: cri
+      format: regex
+      regex: ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>P|F) (?<log>.*)$
+      time_key: time
+      time_format: "%Y-%m-%dT%H:%M:%S.%L%z"
